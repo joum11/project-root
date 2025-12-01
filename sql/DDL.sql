@@ -38,6 +38,9 @@ CREATE TABLE maintenance_logs (maintenance_id SERIAL PRIMARY KEY, equipment_id I
 -- maintenance audit
 CREATE TABLE maintenance_audit (audit_id SERIAL PRIMARY KEY, maintenance_id INT REFERENCES maintenance_logs(maintenance_id) ON DELETE CASCADE, old_status maintenance_status, new_status maintenance_status, changed_at timestamptz NOT NULL DEFAULT now(), changed_by INT REFERENCES users(user_id));
 
+-- Equipment Maintenance Table
+CREATE TABLE IF NOT EXISTS equipment_maintenance (maintenance_id SERIAL PRIMARY KEY, equipment_id INT NOT NULL REFERENCES equipment(equipment_id), room_id INT NOT NULL REFERENCES rooms(room_id), reported_by INT NOT NULL REFERENCES users(user_id), description TEXT NOT NULL, report_date TIMESTAMPTZ DEFAULT now(), status VARCHAR(20) DEFAULT 'pending');
+
 -- this will trigger for maintenance audit
 CREATE OR REPLACE FUNCTION audit_maintenance_status() RETURNS TRIGGER AS $$
 BEGIN
