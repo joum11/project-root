@@ -132,6 +132,10 @@ FOR EACH ROW EXECUTE FUNCTION check_pt_overlap();
 
  -- trainer availability
 CREATE TABLE trainer_availability ( availability_id SERIAL PRIMARY KEY, trainer_id INT REFERENCES trainers(trainer_id) ON DELETE CASCADE, available_start timestamptz NOT NULL, available_end timestamptz NOT NULL, CHECK (available_start < available_end));
+-- index
+CREATE INDEX idx_trainer_availability_range
+ON trainer_availability
+USING gist (tstzrange(available_start, available_end));
 
 -- invoices
 CREATE TABLE invoices (invoice_id SERIAL PRIMARY KEY, member_id INT REFERENCES members(member_id) ON DELETE CASCADE, due_date timestamptz NOT NULL, total_amount NUMERIC CHECK (total_amount >= 0), status VARCHAR(20) DEFAULT 'unpaid');
@@ -141,3 +145,33 @@ CREATE TABLE invoice_items (item_id SERIAL PRIMARY KEY, invoice_id INT REFERENCE
 
 -- payments
 CREATE TABLE payments (payment_id SERIAL PRIMARY KEY, invoice_id INT REFERENCES invoices(invoice_id) ON DELETE CASCADE, paid_at timestamptz NOT NULL, amount NUMERIC CHECK (amount > 0), method VARCHAR(50) NOT NULL);
+-- view function
+CREATE OR REPLACE VIEW member_dashboard AS
+SELECT m.member_id, u.full_name, u.email,
+    (
+        SELECT weight 
+        FROM health_metrics hm
+        WHERE hm.member_id = m.member_id
+        ORDER BY recorded_at DESC
+        LIMIT 1
+    ) AS latest_weight,
+    (
+        SELECT heart_rate
+        FROM health_metrics hm
+        WHERE hm.member_id = m.member_id
+        ORDER BY recorded_at DESC
+        LIMIT 1
+    ) AS latest_heart_rate,
+    (
+        SELECT COUNT(*)
+        FROM class_registrations cr
+        WHERE cr.member_id = m.member_id
+    ) AS total_class_registrations,
+    (
+        SELECT COUNT(*)
+        FROM pt_sessions ps
+        WHERE ps.member_id = m.member_id
+          AND ps.start_time > NOW()
+    ) AS upcoming_pt_sessions
+FROM members m
+JOIN users u ON u.user_id = m.member_id;
