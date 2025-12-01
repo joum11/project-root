@@ -63,7 +63,7 @@ ADD CONSTRAINT unique_member_goal UNIQUE (member_id, goal_type);
 CREATE TABLE classes (class_id SERIAL PRIMARY KEY, name VARCHAR(50) NOT NULL, description TEXT, duration_minutes INT CHECK (duration_minutes > 0));
 
 -- class sessions
-CREATE TABLE class_sessions (sessioPAn_id SERIAL PRIMARY KEY, class_id INT REFERENCES classes(class_id) ON DELETE CASCADE, session_start timestamptz NOT NULL, session_end timestamptz NOT NULL, room_id INT REFERENCES rooms(room_id) ON DELETE CASCADE, trainer_id INT REFERENCES trainers(trainer_id) ON DELETE CASCADE, capacity INT NOT NULL CHECK (capacity > 0), CHECK (session_start < session_end));
+CREATE TABLE class_sessions (session_id SERIAL PRIMARY KEY, class_id INT REFERENCES classes(class_id) ON DELETE CASCADE, session_start timestamptz NOT NULL, session_end timestamptz NOT NULL, room_id INT REFERENCES rooms(room_id) ON DELETE CASCADE, trainer_id INT REFERENCES trainers(trainer_id) ON DELETE CASCADE, capacity INT NOT NULL CHECK (capacity > 0), CHECK (session_start < session_end));
 
 --this will trigger the function to prevent the overlapping of class sessions
 CREATE OR REPLACE FUNCTION check_class_overlap() RETURNS trigger AS $$
