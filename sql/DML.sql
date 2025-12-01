@@ -1,15 +1,16 @@
 --users
-INSERT INTO users (user_id, email, password_hash, full_name, date_of_birth, gender, phone, role)
+
+INSERT INTO users (email, password_hash, full_name, date_of_birth, gender, phone, role)
 VALUES
-(1, 'john@handfc.com','hash', 'John Anderson', '1990-06-10', 'M', '613-617-1234', 'member'),
-(2, 'finn@handfc.com', 'hash', 'Finn Byers', '1985-04-01', 'M', '613-617-2345', 'member'),
-(3, 'carol@handfc.com', 'hash', 'Carol Shelby', '1992-11-11', 'F', '613-617-3456', 'member'),
-(4, 'tommy@fit.com', 'hash', 'Tommy Flay', NULL, 'M', '613-617-4567', 'trainer'),
-(5, 'sara@fit.com', 'hash', 'Sara Kimber',  NULL, 'F', '613-617-5678', 'trainer'),
-(6, 'mark@fit.com', 'hash', 'Mark Lee', NULL, 'M', '613-617-8901', 'trainer'),
-(7, 'abdullah@club.com', 'hash', 'Abdullah Joum', NULL, 'M', '613-617-6789', 'admin'),
-(8, 'lisa@club.com', 'hash', 'Lisa Anker', '1995-02-20', 'F', '613-617-7890', 'admin'),
-(9, 'billy@club.com', 'hash', 'Billy Locky', '1995-02-20', 'M', '613-617-0000', 'admin');
+('john@handfc.com','hash', 'John Anderson', '1990-06-10', 'M', '613-617-1234', 'member'),
+('finn@handfc.com', 'hash', 'Finn Byers', '1985-04-01', 'M', '613-617-2345', 'member'),
+('carol@handfc.com', 'hash', 'Carol Shelby', '1992-11-11', 'F', '613-617-3456', 'member'),
+('tommy@fit.com', 'hash', 'Tommy Flay', NULL, 'M', '613-617-4567', 'trainer'),
+('sara@fit.com', 'hash', 'Sara Kimber',  NULL, 'F', '613-617-5678', 'trainer'),
+('mark@fit.com', 'hash', 'Mark Lee', NULL, 'M', '613-617-8901', 'trainer'),
+('abdullah@club.com', 'hash', 'Abdullah Joum', NULL, 'M', '613-617-6789', 'admin'),
+('lisa@club.com', 'hash', 'Lisa Anker', '1995-02-20', 'F', '613-617-7890', 'admin'),
+('billy@club.com', 'hash', 'Billy Locky', '1995-02-20', 'M', '613-617-0000', 'admin');
 
 -- members
 INSERT INTO members(member_id, emergency_contact)
@@ -128,3 +129,20 @@ VALUES
 (1, 2, '2025-11-05 14:00+00', 75.00, 'credit_card'),
 (2, 3, '2025-11-06 10:00+00', 120.00, 'cash'),
 (3, 1, '2025-11-12 09:30+00', 90.00, 'credit_card');
+
+SELECT setval(pg_get_serial_sequence('users', 'user_id'), (SELECT MAX(user_id) FROM users));
+SELECT setval(pg_get_serial_sequence('members', 'member_id'), (SELECT MAX(member_id) FROM members));
+SELECT setval(pg_get_serial_sequence('trainers', 'trainer_id'), (SELECT MAX(trainer_id) FROM trainers));
+SELECT setval(pg_get_serial_sequence('rooms', 'room_id'), (SELECT MAX(room_id) FROM rooms));
+SELECT setval(pg_get_serial_sequence('equipment', 'equipment_id'), (SELECT MAX(equipment_id) FROM equipment));
+SELECT setval(pg_get_serial_sequence('maintenance_logs', 'maintenance_id'), (SELECT MAX(maintenance_id) FROM maintenance_logs));
+SELECT setval(pg_get_serial_sequence('fitness_goals', 'goal_id'), (SELECT MAX(goal_id) FROM fitness_goals));
+SELECT setval(pg_get_serial_sequence('health_metrics', 'metric_id'), (SELECT MAX(metric_id) FROM health_metrics));
+SELECT setval(pg_get_serial_sequence('classes', 'class_id'), (SELECT MAX(class_id) FROM classes));
+SELECT setval(pg_get_serial_sequence('class_sessions', 'session_id'), (SELECT MAX(session_id) FROM class_sessions));
+SELECT setval(pg_get_serial_sequence('class_registrations', 'registration_id'), (SELECT MAX(registration_id) FROM class_registrations));
+SELECT setval(pg_get_serial_sequence('pt_sessions', 'pt_session_id'), (SELECT MAX(pt_session_id) FROM pt_sessions));
+SELECT setval(pg_get_serial_sequence('trainer_availability', 'availability_id'), (SELECT MAX(availability_id) FROM trainer_availability));
+SELECT setval(pg_get_serial_sequence('invoices', 'invoice_id'), (SELECT MAX(invoice_id) FROM invoices));
+SELECT setval(pg_get_serial_sequence('invoice_items', 'item_id'), (SELECT MAX(item_id) FROM invoice_items));
+SELECT setval(pg_get_serial_sequence('payments', 'payment_id'), (SELECT MAX(payment_id) FROM payments));
