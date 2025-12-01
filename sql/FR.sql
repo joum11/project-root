@@ -5,7 +5,7 @@ DECLARE
     new_member_id INT;
 BEGIN
     IF EXISTS (SELECT 1 FROM users WHERE email = p_email) THEN
-        RAISE NOTICE 'a user with email % already exists.', p_email;
+        RAISE NOTICE 'a user with this email % already exists.', p_email;
         RETURN NULL;
     END IF;
     INSERT INTO users(email, password_hash, full_name, date_of_birth, gender, phone, role)
@@ -26,11 +26,9 @@ BEGIN
     INSERT INTO fitness_goals(member_id, goal_type, target_value, start_date)
     VALUES (p_member_id, p_goal_type, p_target_value, current_date)
     ON CONFLICT (member_id, goal_type)
-    DO UPDATE SET target_value = EXCLUDED.target_value, start_date = current_date;
+    DO UPDATE SET target_value = EXCLUDED.target_value, start_date = EXCLUDED.start_date;
 END;
 $$ LANGUAGE plpgsql;
-
--- this will log health history
 CREATE OR REPLACE FUNCTION member_add_health_metric(p_member_id INT, p_weight NUMERIC, p_heart_rate INT) 
 RETURNS VOID AS $$
 BEGIN
@@ -40,25 +38,31 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- private trainer session scheduling
-CREATE OR REPLACE FUNCTION member_schedule_pt(p_member_id INT, p_trainer_id INT, p_room_id INT, p_start TIMESTAMP, p_end TIMESTAMP) 
+CREATE OR REPLACE FUNCTION member_schedule_pt(p_member_id INT, p_trainer_id INT, p_room_id INT, p_start timestamptz, p_end timestamptz) 
 RETURNS TEXT AS $$
 DECLARE
     conflict_count INT;
 BEGIN
+    IF p_start >= p_end THEN
+        RETURN 'invalid time range';
+    END IF;
+
     SELECT COUNT(*) INTO conflict_count
     FROM pt_sessions
     WHERE trainer_id = p_trainer_id
-      AND tstzrange(start_time, end_time) && tstzrange(p_start, p_end);
+      AND tstzrange(start_time, end_time, '[)') && tstzrange(p_start, p_end, '[)');
     IF conflict_count > 0 THEN
-        RETURN 'Trainer is not available';
+        RETURN 'sorry, the trainer is not available';
     END IF;
+
     SELECT COUNT(*) INTO conflict_count
     FROM pt_sessions
     WHERE room_id = p_room_id
-      AND tstzrange(start_time, end_time) && tstzrange(p_start, p_end);
+      AND tstzrange(start_time, end_time, '[)') && tstzrange(p_start, p_end, '[)');
     IF conflict_count > 0 THEN
         RETURN 'sorry, the room is not available';
     END IF;
+
     INSERT INTO pt_sessions(member_id, trainer_id, start_time, end_time, room_id)
     VALUES (p_member_id, p_trainer_id, p_start, p_end, p_room_id);
     RETURN 'private trainer session scheduled';
@@ -73,31 +77,39 @@ DECLARE
     registered_count INT;
 BEGIN
     SELECT capacity INTO class_capacity FROM class_sessions WHERE session_id = p_session_id;
+    IF class_capacity IS NULL THEN
+        RETURN 'session not found';
+    END IF;
     SELECT COUNT(*) INTO registered_count FROM class_registrations WHERE session_id = p_session_id;
     IF registered_count >= class_capacity THEN
         RETURN 'sorry, the class is full';
     END IF;
-    INSERT INTO class_registrations(member_id, session_id)
-    VALUES (p_member_id, p_session_id)
-    ON CONFLICT DO NOTHING;
+    INSERT INTO class_registrations(session_id, member_id)
+    VALUES (p_session_id, p_member_id)
+    ON CONFLICT DO NOTHING; 
     RETURN 'registered successfully';
 END;
 $$ LANGUAGE plpgsql;
 
 
 -- this will set availability 
-CREATE OR REPLACE FUNCTION trainer_set_availability(p_trainer_id INT, p_start TIMESTAMP, p_end TIMESTAMP) 
+CREATE OR REPLACE FUNCTION trainer_set_availability(p_trainer_id INT, p_start timestamptz, p_end timestamptz) 
 RETURNS TEXT AS $$
 DECLARE
     conflict_count INT;
 BEGIN
+    IF p_start >= p_end THEN
+        RETURN 'invalid availability time range';
+    END IF;
+
     SELECT COUNT(*) INTO conflict_count
     FROM trainer_availability
     WHERE trainer_id = p_trainer_id
-      AND tstzrange(available_start, available_end) && tstzrange(p_start, p_end);
+      AND tstzrange(available_start, available_end, '[)') && tstzrange(p_start, p_end, '[)');
     IF conflict_count > 0 THEN
         RETURN 'sorry, but the availability conflicts with a existing schedule';
     END IF;
+
     INSERT INTO trainer_availability(trainer_id, available_start, available_end)
     VALUES (p_trainer_id, p_start, p_end);
     RETURN 'availability have been added';
@@ -106,20 +118,42 @@ $$ LANGUAGE plpgsql;
 
 -- this will schedule a view
 CREATE OR REPLACE FUNCTION trainer_schedule_view(p_trainer_id INT)
-RETURNS TABLE(session_type TEXT, start_time TIMESTAMP, end_time TIMESTAMP, member_count INT, room_id INT) 
-AS $$
+RETURNS TABLE (
+    session_type TEXT,
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ,
+    member_count INT,
+    room_id INT
+)
+LANGUAGE plpgsql AS
+$$
 BEGIN
     RETURN QUERY
-    SELECT 'PT' AS session_type, start_time, end_time, NULL, room_id
-    FROM pt_sessions
-    WHERE trainer_id = p_trainer_id
+
+    SELECT 
+        'PT' AS session_type,
+        ps.start_time,
+        ps.end_time,
+        NULL::INT AS member_count,  
+        ps.room_id
+    FROM pt_sessions ps
+    WHERE ps.trainer_id = p_trainer_id
+
     UNION ALL
-    SELECT 'Class', session_start, session_end,
-           (SELECT COUNT(*) FROM class_registrations cr WHERE cr.session_id = cs.session_id), room_id
+
+    SELECT 
+        'Class',
+        cs.session_start,
+        cs.session_end,
+        (SELECT COUNT(*)::INT 
+         FROM class_registrations cr 
+         WHERE cr.session_id = cs.session_id),
+        cs.room_id
     FROM class_sessions cs
-    WHERE trainer_id = p_trainer_id;
+    WHERE cs.trainer_id = p_trainer_id;
+
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- this will look for member
 CREATE OR REPLACE FUNCTION trainer_member_lookup(p_name VARCHAR)
@@ -138,14 +172,23 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- this will book a room
-CREATE OR REPLACE FUNCTION admin_book_room(p_room_id INT, p_start TIMESTAMP, p_end TIMESTAMP) 
+CREATE OR REPLACE FUNCTION admin_book_room(p_room_id INT, p_start timestamptz, p_end timestamptz) 
 RETURNS TEXT AS $$
 DECLARE
     conflict_count INT;
 BEGIN
+    IF p_start >= p_end THEN
+        RETURN 'invalid time range';
+    END IF;
+
     SELECT COUNT(*) INTO conflict_count
-    FROM class_sessions
-    WHERE room_id = p_room_id AND tstzrange(session_start, session_end) && tstzrange(p_start, p_end);
+    FROM (
+        SELECT session_start AS sstart, session_end AS send FROM class_sessions WHERE room_id = p_room_id
+        UNION ALL
+        SELECT start_time AS sstart, end_time AS send FROM pt_sessions WHERE room_id = p_room_id
+    ) AS booked
+    WHERE tstzrange(booked.sstart, booked.send, '[)') && tstzrange(p_start, p_end, '[)');
+
     IF conflict_count > 0 THEN
         RETURN 'sorry, the room is already booked';
     END IF;
