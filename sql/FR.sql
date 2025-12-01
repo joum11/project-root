@@ -1,0 +1,180 @@
+-- this will register a user
+CREATE OR REPLACE FUNCTION member_register(p_email VARCHAR, p_password VARCHAR, p_full_name VARCHAR, p_dob DATE, p_gender gender_type, p_phone VARCHAR, p_emergency_contact VARCHAR) 
+RETURNS INT AS $$
+DECLARE
+    new_member_id INT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM users WHERE email = p_email) THEN
+        RAISE NOTICE 'a user with email % already exists.', p_email;
+        RETURN NULL;
+    END IF;
+    INSERT INTO users(email, password_hash, full_name, date_of_birth, gender, phone, role)
+    VALUES (p_email, p_password, p_full_name, p_dob, p_gender, p_phone, 'member')
+    RETURNING user_id INTO new_member_id;
+    INSERT INTO members(member_id, emergency_contact)
+    VALUES (new_member_id, p_emergency_contact);
+    RETURN new_member_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- this will manage the profile
+CREATE OR REPLACE FUNCTION member_update_profile(p_member_id INT, p_full_name VARCHAR, p_phone VARCHAR, p_goal_type VARCHAR, p_target_value NUMERIC ) 
+RETURNS VOID AS $$
+BEGIN
+    UPDATE users SET full_name = p_full_name, phone = p_phone
+    WHERE user_id = p_member_id;
+    INSERT INTO fitness_goals(member_id, goal_type, target_value, start_date)
+    VALUES (p_member_id, p_goal_type, p_target_value, current_date)
+    ON CONFLICT (member_id, goal_type)
+    DO UPDATE SET target_value = EXCLUDED.target_value, start_date = current_date;
+END;
+$$ LANGUAGE plpgsql;
+
+-- this will log health history
+CREATE OR REPLACE FUNCTION member_add_health_metric(p_member_id INT, p_weight NUMERIC, p_heart_rate INT) 
+RETURNS VOID AS $$
+BEGIN
+    INSERT INTO health_metrics(member_id, weight, heart_rate, recorded_at)
+    VALUES (p_member_id, p_weight, p_heart_rate, now());
+END;
+$$ LANGUAGE plpgsql;
+
+-- private trainer session scheduling
+CREATE OR REPLACE FUNCTION member_schedule_pt(p_member_id INT, p_trainer_id INT, p_room_id INT, p_start TIMESTAMP, p_end TIMESTAMP) 
+RETURNS TEXT AS $$
+DECLARE
+    conflict_count INT;
+BEGIN
+    SELECT COUNT(*) INTO conflict_count
+    FROM pt_sessions
+    WHERE trainer_id = p_trainer_id
+      AND tstzrange(start_time, end_time) && tstzrange(p_start, p_end);
+    IF conflict_count > 0 THEN
+        RETURN 'Trainer is not available';
+    END IF;
+    SELECT COUNT(*) INTO conflict_count
+    FROM pt_sessions
+    WHERE room_id = p_room_id
+      AND tstzrange(start_time, end_time) && tstzrange(p_start, p_end);
+    IF conflict_count > 0 THEN
+        RETURN 'sorry, the room is not available';
+    END IF;
+    INSERT INTO pt_sessions(member_id, trainer_id, start_time, end_time, room_id)
+    VALUES (p_member_id, p_trainer_id, p_start, p_end, p_room_id);
+    RETURN 'private trainer session scheduled';
+END;
+$$ LANGUAGE plpgsql;
+
+-- group class registration
+CREATE OR REPLACE FUNCTION member_register_class(p_member_id INT, p_session_id INT) 
+RETURNS TEXT AS $$
+DECLARE
+    class_capacity INT;
+    registered_count INT;
+BEGIN
+    SELECT capacity INTO class_capacity FROM class_sessions WHERE session_id = p_session_id;
+    SELECT COUNT(*) INTO registered_count FROM class_registrations WHERE session_id = p_session_id;
+    IF registered_count >= class_capacity THEN
+        RETURN 'sorry, the class is full';
+    END IF;
+    INSERT INTO class_registrations(member_id, session_id)
+    VALUES (p_member_id, p_session_id)
+    ON CONFLICT DO NOTHING;
+    RETURN 'registered successfully';
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- this will set availability 
+CREATE OR REPLACE FUNCTION trainer_set_availability(p_trainer_id INT, p_start TIMESTAMP, p_end TIMESTAMP) 
+RETURNS TEXT AS $$
+DECLARE
+    conflict_count INT;
+BEGIN
+    SELECT COUNT(*) INTO conflict_count
+    FROM trainer_availability
+    WHERE trainer_id = p_trainer_id
+      AND tstzrange(available_start, available_end) && tstzrange(p_start, p_end);
+    IF conflict_count > 0 THEN
+        RETURN 'sorry, but the availability conflicts with a existing schedule';
+    END IF;
+    INSERT INTO trainer_availability(trainer_id, available_start, available_end)
+    VALUES (p_trainer_id, p_start, p_end);
+    RETURN 'availability have been added';
+END;
+$$ LANGUAGE plpgsql;
+
+-- this will schedule a view
+CREATE OR REPLACE FUNCTION trainer_schedule_view(p_trainer_id INT)
+RETURNS TABLE(session_type TEXT, start_time TIMESTAMP, end_time TIMESTAMP, member_count INT, room_id INT) 
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 'PT' AS session_type, start_time, end_time, NULL, room_id
+    FROM pt_sessions
+    WHERE trainer_id = p_trainer_id
+    UNION ALL
+    SELECT 'Class', session_start, session_end,
+           (SELECT COUNT(*) FROM class_registrations cr WHERE cr.session_id = cs.session_id), room_id
+    FROM class_sessions cs
+    WHERE trainer_id = p_trainer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- this will look for member
+CREATE OR REPLACE FUNCTION trainer_member_lookup(p_name VARCHAR)
+RETURNS TABLE(member_id INT, full_name VARCHAR, last_weight NUMERIC, last_heart_rate INT, active_goals TEXT) 
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT u.user_id, u.full_name,
+           (SELECT weight FROM health_metrics hm WHERE hm.member_id = u.user_id ORDER BY recorded_at DESC LIMIT 1),
+           (SELECT heart_rate FROM health_metrics hm WHERE hm.member_id = u.user_id ORDER BY recorded_at DESC LIMIT 1),
+           (SELECT STRING_AGG(goal_type || ' (' || target_value || ')', ', ')
+            FROM fitness_goals fg WHERE fg.member_id = u.user_id AND (fg.target_date IS NULL OR fg.target_date >= current_date))
+    FROM users u
+    WHERE LOWER(u.full_name) LIKE LOWER('%' || p_name || '%') AND u.role = 'member';
+END;
+$$ LANGUAGE plpgsql;
+
+-- this will book a room
+CREATE OR REPLACE FUNCTION admin_book_room(p_room_id INT, p_start TIMESTAMP, p_end TIMESTAMP) 
+RETURNS TEXT AS $$
+DECLARE
+    conflict_count INT;
+BEGIN
+    SELECT COUNT(*) INTO conflict_count
+    FROM class_sessions
+    WHERE room_id = p_room_id AND tstzrange(session_start, session_end) && tstzrange(p_start, p_end);
+    IF conflict_count > 0 THEN
+        RETURN 'sorry, the room is already booked';
+    END IF;
+    RETURN 'the room is available';
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- equipment mainteinance logging
+CREATE OR REPLACE FUNCTION admin_log_equipment(p_equipment_id INT, p_room_id INT, p_reported_by INT, p_description TEXT) 
+RETURNS INT AS $$
+DECLARE new_id INT;
+BEGIN
+    INSERT INTO maintenance_logs(equipment_id, room_id, reported_by, description, status, reported_at)
+    VALUES (p_equipment_id, p_room_id, p_reported_by, p_description, 'open', now())
+    RETURNING maintenance_id INTO new_id;
+    RETURN new_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- managing class
+CREATE OR REPLACE FUNCTION admin_create_class( p_name VARCHAR, p_description TEXT, p_duration INT) 
+RETURNS INT AS $$
+DECLARE
+    new_class_id INT;
+BEGIN
+    INSERT INTO classes(name, description, duration_minutes)
+    VALUES (p_name, p_description, p_duration)
+    RETURNING class_id INTO new_class_id;
+    RETURN new_class_id;
+END;
+$$ LANGUAGE plpgsql;
